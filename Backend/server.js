@@ -1,112 +1,111 @@
-import express from "express";
-import dotenv from "dotenv";
-import cors from "cors";
-import http from "http";
-import { Server } from "socket.io";
-import connectDB from "./config/db.js";
-import path from "path";
-import { fileURLToPath } from "url";
-import userRoutes from "./routes/userRoutes.js";
-import postRoutes from "./routes/postRoutes.js";
-import commentRoutes from "./routes/commentRoutes.js";
-import messageRoutes from "./routes/messageRoutes.js";
-import notificationRoutes from "./routes/notificationRoutes.js";
+import express from 'express';
+import dotenv from 'dotenv';
+import cors from 'cors';
+import http from 'http';
+import { Server } from 'socket.io';
+import connectDB from './config/db.js';
+import userRoutes from './routes/userRoutes.js';
+import postRoutes from './routes/postRoutes.js';
+import commentRoutes from './routes/commentRoutes.js';
+import messageRoutes from './routes/messageRoutes.js';
+import notificationRoutes from './routes/notificationRoutes.js';
 
-// Configuration
+// Load environment variables
 dotenv.config();
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 
-// Connect to MongoDB
+// Database connection
 connectDB();
 
 // Initialize Express app
 const app = express();
 
-// Basic security middleware
-app.use(express.json({ limit: "10kb" })); // Limits JSON body size
-
-// CORS Configuration (simplified)
+// Middleware configuration
+app.use(express.json({ limit: '10kb' }));
 app.use(cors({
-  origin: process.env.NODE_ENV === "production" 
+  origin: process.env.NODE_ENV === 'production'
     ? process.env.FRONTEND_URL
-    : "http://localhost:5173",
+    : 'http://localhost:5173',
   credentials: true
 }));
 
 // API Routes
-app.use("/api/users", userRoutes);
-app.use("/api/posts", postRoutes);
-app.use("/api/comments", commentRoutes);
-app.use("/api/messages", messageRoutes);
-app.use("/api/notifications", notificationRoutes);
+app.use('/api/users', userRoutes);
+app.use('/api/posts', postRoutes);
+app.use('/api/comments', commentRoutes);
+app.use('/api/messages', messageRoutes);
+app.use('/api/notifications', notificationRoutes);
 
-// Serve frontend in production
-if (process.env.NODE_ENV === "production") {
-  app.use(express.static(path.join(__dirname, "../frontend/dist")));
-  app.get("*", (req, res) => {
-    res.sendFile(path.resolve(__dirname, "../frontend/dist", "index.html"));
-  });
-}
+// Health check endpoint
+app.get('/api/health', (req, res) => {
+  res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
+});
 
 // Create HTTP server
 const server = http.createServer(app);
 
-// Socket.io Configuration
+// Socket.IO configuration
 const io = new Server(server, {
   cors: {
-    origin: process.env.NODE_ENV === "production"
+    origin: process.env.NODE_ENV === 'production'
       ? process.env.FRONTEND_URL
-      : "http://localhost:5173",
-    methods: ["GET", "POST"]
+      : 'http://localhost:5173',
+    methods: ['GET', 'POST'],
+    credentials: true
+  },
+  connectionStateRecovery: {
+    maxDisconnectionDuration: 300000, // 5 minutes
+    skipMiddlewares: true
   }
 });
 
-// Socket.io Logic (unchanged)
+// Real-time functionality
 const userSocketMap = {};
 
-io.on("connection", (socket) => {
-  console.log("User connected:", socket.id);
+io.on('connection', (socket) => {
+  console.log(`User connected: ${socket.id}`);
 
-  socket.on("register-user", (userId) => {
+  // User registration
+  socket.on('register-user', (userId) => {
     userSocketMap[userId] = socket.id;
-    io.emit("online-users", Object.keys(userSocketMap));
+    io.emit('online-users', Object.keys(userSocketMap));
   });
 
-  socket.on("unregister-user", () => {
-    for (const [userId, sockId] of Object.entries(userSocketMap)) {
+  // User deregistration
+  socket.on('unregister-user', () => {
+    Object.entries(userSocketMap).forEach(([userId, sockId]) => {
       if (sockId === socket.id) {
         delete userSocketMap[userId];
-        io.emit("online-users", Object.keys(userSocketMap));
-        break;
+        io.emit('online-users', Object.keys(userSocketMap));
       }
-    }
+    });
   });
 
-  socket.on("send-message", ({ from, to, text }) => {
+  // Message handling
+  socket.on('send-message', ({ from, to, text }) => {
     const targetSocket = userSocketMap[to];
     if (targetSocket) {
-      io.to(targetSocket).emit("receive-message", { 
-        from, 
-        text, 
-        timestamp: new Date().toISOString() 
+      io.to(targetSocket).emit('receive-message', {
+        from,
+        text,
+        timestamp: new Date().toISOString()
       });
     }
   });
 
-  socket.on("disconnect", () => {
-    for (const [userId, sockId] of Object.entries(userSocketMap)) {
+  // Cleanup on disconnect
+  socket.on('disconnect', () => {
+    Object.entries(userSocketMap).forEach(([userId, sockId]) => {
       if (sockId === socket.id) {
         delete userSocketMap[userId];
-        io.emit("online-users", Object.keys(userSocketMap));
-        break;
+        io.emit('online-users', Object.keys(userSocketMap));
       }
-    }
+    });
   });
 });
 
 // Start server
 const PORT = process.env.PORT || 5000;
 server.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+  console.log(`Server running in ${process.env.NODE_ENV || 'development'} mode`);
+  console.log(`Listening on port ${PORT}`);
 });
